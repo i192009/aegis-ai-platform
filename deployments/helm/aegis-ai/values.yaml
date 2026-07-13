@@ -1,0 +1,92 @@
+global:
+  imageRegistry: ghcr.io/i192009
+  imageTag: "0.1.0"
+  imagePullPolicy: IfNotPresent
+  secretName: aegis-ai-secrets
+  databaseURLSecretKey: database-url
+  apiKeyPepperSecretKey: api-key-pepper
+  rabbitMQURLSecretKey: rabbitmq-url
+  providerAPIKeySecretKey: provider-api-key
+
+config:
+  environment: production
+  logLevel: INFO
+  redisAddress: redis.aegis-ai.svc.cluster.local:6379
+  kafkaBrokers: kafka.aegis-ai.svc.cluster.local:9092
+  kafkaTopic: aegis.events.v1
+  kafkaConsumerGroup: aegis-audit-v1
+  providerName: approved-provider
+  providerEndpoint: https://provider.example.invalid
+  providerModels: aegis-small,aegis-medium
+  routingStrategy: least_outstanding
+  otlpEndpoint: otel-collector.observability.svc.cluster.local:4318
+
+services:
+  gateway:
+    image: aegis-ai-gateway
+    replicas: 3
+    port: 8080
+    resources:
+      requests: {cpu: 200m, memory: 256Mi}
+      limits: {cpu: "1", memory: 1Gi}
+  evaluation-api:
+    image: aegis-ai-evaluation-api
+    replicas: 2
+    port: 8080
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+  outbox-relay:
+    image: aegis-ai-outbox-relay
+    replicas: 2
+    port: 8080
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+  audit-consumer:
+    image: aegis-ai-audit-consumer
+    replicas: 2
+    port: 8080
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: "1", memory: 512Mi}
+  evaluation-worker:
+    image: aegis-ai-evaluation-worker
+    replicas: 1
+    port: 8080
+    resources:
+      requests: {cpu: 200m, memory: 256Mi}
+      limits: {cpu: "2", memory: 1Gi}
+
+gateway:
+  hpa:
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 65
+
+keda:
+  enabled: true
+  worker:
+    minReplicaCount: 1
+    maxReplicaCount: 30
+    queueName: aegis.evaluation.work
+    queueLength: "20"
+  audit:
+    minReplicaCount: 1
+    maxReplicaCount: 12
+    lagThreshold: "1000"
+
+ingress:
+  enabled: true
+  className: nginx
+  host: aegis.example.invalid
+  tlsSecretName: aegis-tls
+
+gatewayAPI:
+  enabled: false
+  gatewayName: shared-gateway
+  gatewayNamespace: ingress-system
+  hostname: aegis.example.invalid
+
+networkPolicy:
+  enabled: true

@@ -1,0 +1,16 @@
+{{- range $name, $service := .Values.services }}
+{{- if gt (int $service.replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aegis.fullname" $ }}-{{ $name }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "aegis.name" $ }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $name }}
+{{- end }}
+{{- end }}

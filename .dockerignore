@@ -1,0 +1,11 @@
+.git
+.github
+.env
+bin
+build
+coverage
+docs
+tests
+*.md
+!go.mod
+!go.sum

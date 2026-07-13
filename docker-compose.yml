@@ -1,0 +1,253 @@
+name: aegis-ai
+
+x-app-environment: &app-environment
+  AEGIS_ENVIRONMENT: development
+  AEGIS_LOG_LEVEL: INFO
+  AEGIS_DATABASE_URL: postgres://aegis:aegis@postgres:5432/aegis?sslmode=disable
+  AEGIS_REDIS_ADDRESS: redis:6379
+  AEGIS_KAFKA_BROKERS: kafka:9092
+  AEGIS_KAFKA_TOPIC: aegis.events.v1
+  AEGIS_RABBITMQ_URL: amqp://aegis:aegis@rabbitmq:5672/
+  AEGIS_API_KEY_PEPPER: development-only-pepper-change-me-32-bytes
+  AEGIS_DEV_API_KEY: aegis_devkey0000_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG
+  AEGIS_DEV_MEMORY: "false"
+  AEGIS_PROVIDER_NAME: mock-primary
+  AEGIS_PROVIDER_ENDPOINT: http://mock-provider:8080
+  AEGIS_PROVIDER_MODELS: aegis-small,aegis-medium
+  AEGIS_OTLP_ENDPOINT: otel-collector:4318
+
+x-app-security: &app-security
+  read_only: true
+  tmpfs:
+    - /tmp:size=32m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+x-app-dependencies: &app-dependencies
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+  kafka:
+    condition: service_healthy
+  rabbitmq:
+    condition: service_healthy
+  seed:
+    condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:17.6-alpine3.22
+    environment:
+      POSTGRES_DB: aegis
+      POSTGRES_USER: aegis
+      POSTGRES_PASSWORD: aegis
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U aegis -d aegis"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.2.1-alpine3.22
+    command: [redis-server, --save, "", --appendonly, "no", --maxmemory, 256mb, --maxmemory-policy, allkeys-lru]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  kafka:
+    image: apache/kafka:4.1.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: [CMD-SHELL, "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:4.1.4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: aegis
+      RABBITMQ_DEFAULT_PASS: aegis
+    ports:
+      - "15672:15672"
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    image: migrate/migrate:v4.19.0
+    command: ["-path=/migrations", "-database=postgres://aegis:aegis@postgres:5432/aegis?sslmode=disable", up]
+    volumes:
+      - ./migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  seed:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: admin-cli
+    command: [seed]
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  mock-provider:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: mock-provider
+    environment:
+      <<: *app-environment
+      AEGIS_HTTP_ADDRESS: :8080
+      AEGIS_HEALTHCHECK_URL: http://127.0.0.1:8080/health/live
+    ports:
+      - "8084:8080"
+    <<: *app-security
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: gateway
+    environment:
+      <<: *app-environment
+      AEGIS_HTTP_ADDRESS: :8080
+      AEGIS_HEALTHCHECK_URL: http://127.0.0.1:8080/health/live
+    ports:
+      - "8080:8080"
+    depends_on:
+      <<: *app-dependencies
+      mock-provider:
+        condition: service_healthy
+    <<: *app-security
+    restart: unless-stopped
+
+  outbox-relay:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: outbox-relay
+    environment:
+      <<: *app-environment
+      AEGIS_HTTP_ADDRESS: :8080
+    ports:
+      - "8081:8080"
+    depends_on: *app-dependencies
+    <<: *app-security
+    restart: unless-stopped
+
+  audit-consumer:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: audit-consumer
+    environment:
+      <<: *app-environment
+      AEGIS_HTTP_ADDRESS: :8080
+    ports:
+      - "8082:8080"
+    depends_on: *app-dependencies
+    <<: *app-security
+    restart: unless-stopped
+
+  evaluation-api:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: evaluation-api
+    environment:
+      <<: *app-environment
+      AEGIS_HTTP_ADDRESS: :8080
+    ports:
+      - "8083:8080"
+    depends_on: *app-dependencies
+    <<: *app-security
+    restart: unless-stopped
+
+  evaluation-worker:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: evaluation-worker
+    environment:
+      <<: *app-environment
+      AEGIS_HTTP_ADDRESS: :8080
+    ports:
+      - "8085:8080"
+    depends_on: *app-dependencies
+    <<: *app-security
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    command: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.retention.time=7d]
+    volumes:
+      - ./deployments/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./deployments/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deployments/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.137.0
+    command: [--config=/etc/otelcol/config.yml]
+    volumes:
+      - ./deployments/otel/collector.yml:/etc/otelcol/config.yml:ro
+    ports:
+      - "4318:4318"
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

@@ -1,0 +1,50 @@
+{{- if .Values.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "aegis.fullname" . }}-evaluation-worker
+spec:
+  scaleTargetRef:
+    name: {{ include "aegis.fullname" . }}-evaluation-worker
+  minReplicaCount: {{ .Values.keda.worker.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.worker.maxReplicaCount }}
+  cooldownPeriod: 120
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: {{ .Values.keda.worker.queueName }}
+        mode: QueueLength
+        value: {{ .Values.keda.worker.queueLength | quote }}
+      authenticationRef:
+        name: {{ include "aegis.fullname" . }}-rabbit-auth
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "aegis.fullname" . }}-rabbit-auth
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: {{ .Values.global.secretName }}
+      key: {{ .Values.global.rabbitMQURLSecretKey }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "aegis.fullname" . }}-audit-consumer
+spec:
+  scaleTargetRef:
+    name: {{ include "aegis.fullname" . }}-audit-consumer
+  minReplicaCount: {{ .Values.keda.audit.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.audit.maxReplicaCount }}
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: {{ .Values.config.kafkaBrokers | quote }}
+        consumerGroup: {{ .Values.config.kafkaConsumerGroup | quote }}
+        topic: {{ .Values.config.kafkaTopic | quote }}
+        lagThreshold: {{ .Values.keda.audit.lagThreshold | quote }}
+        offsetResetPolicy: earliest
+        allowIdleConsumers: "false"
+{{- end }}

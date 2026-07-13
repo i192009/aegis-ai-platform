@@ -1,0 +1,230 @@
+openapi: 3.1.0
+info:
+  title: AegisAI Platform API
+  version: 0.1.0
+  description: OpenAI-compatible multi-tenant gateway and deterministic response-evaluation API.
+servers:
+  - url: http://localhost:8080
+    description: Gateway local endpoint
+tags:
+  - {name: Chat}
+  - {name: Requests}
+  - {name: Evaluations}
+  - {name: Operations}
+paths:
+  /v1/chat/completions:
+    post:
+      tags: [Chat]
+      summary: Create or replay a chat completion
+      security: [{ApiKey: []}]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChatRequest'}
+      responses:
+        '200':
+          description: Completed response or SSE stream when stream is true
+          content:
+            application/json: {schema: {$ref: '#/components/schemas/ChatResponse'}}
+            text/event-stream: {schema: {type: string}}
+        '202': {description: Identical request is already processing, content: {application/json: {schema: {$ref: '#/components/schemas/RequestStatus'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/Problem'}
+        '502': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /v1/requests/{request_id}:
+    get:
+      tags: [Requests]
+      summary: Get tenant-owned logical request status
+      security: [{ApiKey: []}]
+      parameters:
+        - $ref: '#/components/parameters/RequestID'
+      responses:
+        '200': {description: Request status, content: {application/json: {schema: {$ref: '#/components/schemas/RequestStatus'}}}}
+        '404': {$ref: '#/components/responses/Problem'}
+  /v1/requests/{request_id}/cancel:
+    post:
+      tags: [Requests]
+      summary: Cancel a non-terminal logical request
+      security: [{ApiKey: []}]
+      parameters:
+        - $ref: '#/components/parameters/RequestID'
+      responses:
+        '204': {description: Cancellation committed}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+  /v1/evaluations:
+    post:
+      tags: [Evaluations]
+      summary: Submit deterministic evaluation work
+      servers: [{url: http://localhost:8083}]
+      security: [{ApiKey: []}]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json: {schema: {$ref: '#/components/schemas/EvaluationRequest'}}
+      responses:
+        '202': {description: Evaluation persisted and queued, content: {application/json: {schema: {$ref: '#/components/schemas/Evaluation'}}}}
+        '409': {$ref: '#/components/responses/Problem'}
+    get:
+      tags: [Evaluations]
+      summary: List tenant evaluations
+      servers: [{url: http://localhost:8083}]
+      security: [{ApiKey: []}]
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, maximum: 100, default: 50}}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+      responses:
+        '200': {description: Evaluation page}
+  /v1/evaluations/{evaluation_id}:
+    get:
+      tags: [Evaluations]
+      summary: Get one tenant evaluation
+      servers: [{url: http://localhost:8083}]
+      security: [{ApiKey: []}]
+      parameters:
+        - {name: evaluation_id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Evaluation, content: {application/json: {schema: {$ref: '#/components/schemas/Evaluation'}}}}
+        '404': {$ref: '#/components/responses/Problem'}
+  /v1/evaluations/{evaluation_id}/retry:
+    post:
+      tags: [Evaluations]
+      summary: Retry a failed or pending evaluation
+      servers: [{url: http://localhost:8083}]
+      security: [{ApiKey: []}]
+      parameters:
+        - {name: evaluation_id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '202': {description: Evaluation requeued}
+        '409': {$ref: '#/components/responses/Problem'}
+  /health/live:
+    get:
+      tags: [Operations]
+      security: []
+      responses: {'200': {description: Process is alive}}
+  /health/ready:
+    get:
+      tags: [Operations]
+      security: []
+      responses: {'200': {description: Process and required dependencies are ready}, '503': {description: Not ready}}
+  /metrics:
+    get:
+      tags: [Operations]
+      security: []
+      responses: {'200': {description: Prometheus metrics}}
+  /version:
+    get:
+      tags: [Operations]
+      security: []
+      responses: {'200': {description: Build metadata}}
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 8, maxLength: 128}
+    CorrelationID:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      schema: {type: string, maxLength: 128}
+    RequestID:
+      name: request_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  responses:
+    Problem:
+      description: RFC 9457-style problem response
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+  schemas:
+    Message:
+      type: object
+      required: [role, content]
+      properties:
+        role: {type: string, enum: [system, user, assistant, tool]}
+        content: {type: string, minLength: 1, maxLength: 65536}
+    ChatRequest:
+      type: object
+      required: [model, messages]
+      additionalProperties: false
+      properties:
+        model: {type: string, maxLength: 128}
+        messages: {type: array, minItems: 1, maxItems: 100, items: {$ref: '#/components/schemas/Message'}}
+        temperature: {type: number, minimum: 0, maximum: 2}
+        max_tokens: {type: integer, minimum: 0, maximum: 32768}
+        stream: {type: boolean, default: false}
+        metadata: {type: object, additionalProperties: true}
+    Usage:
+      type: object
+      required: [prompt_tokens, completion_tokens, total_tokens]
+      properties:
+        prompt_tokens: {type: integer, format: int64}
+        completion_tokens: {type: integer, format: int64}
+        total_tokens: {type: integer, format: int64}
+    ChatResponse:
+      type: object
+      required: [id, object, created, model, choices, usage]
+      properties:
+        id: {type: string}
+        object: {const: chat.completion}
+        created: {type: integer, format: int64}
+        model: {type: string}
+        choices: {type: array, items: {type: object}}
+        usage: {$ref: '#/components/schemas/Usage'}
+    RequestStatus:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        model: {type: string}
+        status: {type: string, enum: [RECEIVED, VALIDATED, ROUTING, IN_PROGRESS, COMPLETED, FAILED, CANCELLED, BUDGET_REJECTED]}
+        partial_response_streamed: {type: boolean}
+        usage: {$ref: '#/components/schemas/Usage'}
+        cost_micro_usd: {type: integer, format: int64}
+    EvaluationRequest:
+      type: object
+      required: [request_id, job_type]
+      additionalProperties: false
+      properties:
+        request_id: {type: string, format: uuid}
+        job_type: {type: string, enum: [response-evaluation-suite, response-quality, pii-scan, safety-scan, latency-validation, cost-validation, model-output-comparison]}
+        parameters: {type: object, additionalProperties: true}
+    Evaluation:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        request_id: {type: string, format: uuid}
+        job_type: {type: string}
+        status: {type: string, enum: [PENDING, QUEUED, RUNNING, COMPLETED, FAILED, DEAD_LETTERED]}
+        attempt_count: {type: integer}
+        result: {type: object}
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: {type: string, format: uri-reference}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        instance: {type: string}
+        code: {type: string}
+        request_id: {type: string}
+        correlation_id: {type: string}

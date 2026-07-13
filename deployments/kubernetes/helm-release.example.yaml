@@ -1,0 +1,16 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: aegis-ai
+  namespace: aegis-ai
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: ./deployments/helm/aegis-ai
+      sourceRef:
+        kind: GitRepository
+        name: aegis-ai
+  values:
+    global:
+      imageTag: "0.1.0"

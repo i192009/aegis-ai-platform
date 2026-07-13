@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: aegis-services
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - gateway:8080
+          - mock-provider:8080
+          - outbox-relay:8080
+          - audit-consumer:8080
+          - evaluation-api:8080
+          - evaluation-worker:8080

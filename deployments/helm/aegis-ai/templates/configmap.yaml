@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aegis.fullname" . }}
+  labels:
+    {{- include "aegis.labels" . | nindent 4 }}
+data:
+  AEGIS_ENVIRONMENT: {{ .Values.config.environment | quote }}
+  AEGIS_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  AEGIS_REDIS_ADDRESS: {{ .Values.config.redisAddress | quote }}
+  AEGIS_KAFKA_BROKERS: {{ .Values.config.kafkaBrokers | quote }}
+  AEGIS_KAFKA_TOPIC: {{ .Values.config.kafkaTopic | quote }}
+  AEGIS_KAFKA_CONSUMER_GROUP: {{ .Values.config.kafkaConsumerGroup | quote }}
+  AEGIS_PROVIDER_NAME: {{ .Values.config.providerName | quote }}
+  AEGIS_PROVIDER_ENDPOINT: {{ .Values.config.providerEndpoint | quote }}
+  AEGIS_PROVIDER_MODELS: {{ .Values.config.providerModels | quote }}
+  AEGIS_ROUTING_STRATEGY: {{ .Values.config.routingStrategy | quote }}
+  AEGIS_OTLP_ENDPOINT: {{ .Values.config.otlpEndpoint | quote }}
+  AEGIS_DEV_MEMORY: "false"
