@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # AegisAI Platform
 
 AegisAI is an original enterprise-style reference implementation of a multi-tenant AI gateway and deterministic response-evaluation platform. It demonstrates explicit distributed-systems correctness in Go without claiming deployment at Citi, another bank, or any production institution.
@@ -199,3 +200,7 @@ See [load testing](docs/load-testing.md) and [failure modes](docs/failure-modes.
 ## Roadmap
 
 The reference implementation is feature-complete for its stated scope. Real deployment work would focus on institutional identity, managed multi-region dependencies, compliance controls, performance evidence, provider-specific tokenisation, secret rotation, signed supply-chain artifacts, and recurring disaster-recovery exercises rather than adding more demonstration services.
+=======
+# aegis-ai-platform
+AegisAI is an original enterprise-style reference implementation of a multi-tenant AI gateway and deterministic response-evaluation platform. It demonstrates explicit distributed-systems correctness in Go without claiming deployment at Citi, another bank, or any production institution.
+>>>>>>> f27d5cf2dc040659aca17be6e5fda51b2e2b9d61
